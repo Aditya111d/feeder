@@ -1,4 +1,3 @@
-// app/control.js
 import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
@@ -12,15 +11,16 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
-import { Picker } from "@react-native-picker/picker"; // Already updated import
+import { Picker } from "@react-native-picker/picker";
 
 export default function ControlScreen() {
   const { user } = useAuth();
   const [feeds, setFeeds] = useState([]);
   const [pets, setPets] = useState([]);
-  const [selectedPet, setSelectedPet] = useState(""); // Initialize as empty string
+  const [selectedPet, setSelectedPet] = useState("");
   const [amount, setAmount] = useState("");
 
+  // Fetch pets and set initial selectedPet
   useEffect(() => {
     if (!user) return;
 
@@ -33,12 +33,20 @@ export default function ControlScreen() {
         console.error("Error fetching pets:", error);
       } else {
         setPets(data);
-        if (data.length > 0) setSelectedPet(data[0].id.toString()); // Convert to string
+        if (data.length > 0 && !selectedPet) {
+          setSelectedPet(data[0].id.toString());
+        }
       }
     };
 
+    fetchPets();
+  }, [user]);
+
+  // Fetch feeds and manage real-time subscription when selectedPet changes
+  useEffect(() => {
+    if (!user || !selectedPet) return;
+
     const fetchFeeds = async () => {
-      if (!selectedPet) return;
       const { data, error } = await supabase
         .from("feeds")
         .select("*")
@@ -53,11 +61,11 @@ export default function ControlScreen() {
       }
     };
 
-    fetchPets();
     fetchFeeds();
 
+    // Set up real-time subscription
     const subscription = supabase
-      .channel("feeds")
+      .channel(`feeds-${selectedPet}`)
       .on(
         "postgres_changes",
         {
@@ -74,18 +82,9 @@ export default function ControlScreen() {
       )
       .subscribe();
 
-    const petChangeHandler = supabase
-      .channel("pet_change")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pets" },
-        () => fetchPets()
-      )
-      .subscribe();
-
+    // Cleanup subscription
     return () => {
       subscription.unsubscribe();
-      petChangeHandler.unsubscribe();
     };
   }, [user, selectedPet]);
 
@@ -112,15 +111,34 @@ export default function ControlScreen() {
     }
   };
 
-  const renderFeedItem = ({ item }) => (
-    <View style={styles.feedItem}>
-      <Text style={styles.feedText}>
-        Feed at {new Date(item.timestamp).toLocaleString()} - Status:{" "}
-        {item.status} - Amount: {item.amount_g || "N/A"}{" "}
-        {item.amount_g ? "grams" : ""}
-      </Text>
-    </View>
-  );
+  const renderFeedItem = ({ item }) => {
+    // Convert UTC timestamp to local timezone
+    const feedDate = new Date(item.timestamp);
+    // Adjust for local timezone (optional if toLocaleString handles it correctly)
+    const localDate = new Date(
+      feedDate.getTime() - feedDate.getTimezoneOffset() * 60 * 1000
+    );
+
+    // Format in 12-hour AM/PM
+    const formattedTime = localDate.toLocaleString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+
+    return (
+      <View style={styles.feedItem}>
+        <Text style={styles.feedText}>
+          Feed at {formattedTime} - Status: {item.status} - Amount: {item.amount_g || "N/A"}{" "}
+          {item.amount_g ? "grams" : ""}
+        </Text>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -128,17 +146,21 @@ export default function ControlScreen() {
       <View style={styles.pickerContainer}>
         <Text style={styles.subtitle}>Select Pet:</Text>
         <Picker
-          selectedValue={selectedPet} // Already a string
+          selectedValue={selectedPet}
           style={styles.picker}
-          onValueChange={(itemValue) => setSelectedPet(itemValue)} // Value is a string
+          onValueChange={(itemValue) => setSelectedPet(itemValue)}
         >
-          {pets.map((pet) => (
-            <Picker.Item
-              key={pet.id}
-              label={pet.name}
-              value={pet.id.toString()}
-            /> // Convert to string
-          ))}
+          {pets.length === 0 ? (
+            <Picker.Item label="No pets available" value="" />
+          ) : (
+            pets.map((pet) => (
+              <Picker.Item
+                key={pet.id}
+                label={pet.name}
+                value={pet.id.toString()}
+              />
+            ))
+          )}
         </Picker>
       </View>
       <View style={styles.inputContainer}>
@@ -168,8 +190,7 @@ export default function ControlScreen() {
       </TouchableOpacity>
       <Text style={styles.historyTitle}>
         Recent Feeds for{" "}
-        {pets.find((p) => p.id.toString() === selectedPet)?.name ||
-          "Selected Pet"}
+        {pets.find((p) => p.id.toString() === selectedPet)?.name || "Selected Pet"}
       </Text>
       <FlatList
         data={feeds}

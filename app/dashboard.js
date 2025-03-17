@@ -1,4 +1,3 @@
-// app/index.js
 import React, { useContext, useState, useEffect } from "react";
 import {
   StyleSheet,
@@ -7,11 +6,15 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
+  ActivityIndicator,
+  ScrollView, // Add ScrollView
+  RefreshControl, // Add RefreshControl
 } from "react-native";
 import { router, useNavigation } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
+import { Picker } from "@react-native-picker/picker";
 
 export default function DashboardScreen() {
   const { user, loading } = useContext(AuthContext);
@@ -21,57 +24,108 @@ export default function DashboardScreen() {
   const [lastFeeding, setLastFeeding] = useState(null);
   const [todaysTotal, setTodaysTotal] = useState(0);
   const [amount, setAmount] = useState(10);
+  const [isFeeding, setIsFeeding] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // Add refreshing state
 
+  // Function to fetch pets
+  const fetchPets = async () => {
+    const { data, error } = await supabase
+      .from("pets")
+      .select("*")
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Error fetching pets:", error);
+      Alert.alert("Error", "Failed to load pets");
+    } else {
+      setPets(data);
+      if (data.length > 0 && !selectedPet) {
+        setSelectedPet(data[0]);
+      }
+    }
+  };
+
+  // Function to fetch feeding data
+  const fetchFeedingData = async () => {
+    if (!selectedPet) return;
+
+    const today = new Date().toISOString().split("T")[0];
+    const { data: feeds, error } = await supabase
+      .from("feeds")
+      .select("*")
+      .eq("pet_id", selectedPet.id)
+      .gte("timestamp", `${today}T00:00:00`)
+      .lte("timestamp", `${today}T23:59:59`)
+      .order("timestamp", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching feeds:", error);
+      Alert.alert("Error", "Failed to load feeding data");
+    } else {
+      if (feeds.length > 0) {
+        setLastFeeding(feeds[0].timestamp);
+        const total = feeds.reduce((sum, feed) => sum + feed.amount_g, 0);
+        setTodaysTotal(total);
+      } else {
+        setLastFeeding(null);
+        setTodaysTotal(0);
+      }
+    }
+  };
+
+  // Initial fetch on mount
   useEffect(() => {
     if (!user) return;
-
-    const fetchPets = async () => {
-      const { data, error } = await supabase
-        .from("pets")
-        .select("*")
-        .eq("user_id", user.id);
-      if (error) {
-        console.error("Error fetching pets:", error);
-      } else {
-        setPets(data);
-        if (data.length > 0) {
-          setSelectedPet(data[0]);
-        }
-      }
-    };
-
     fetchPets();
   }, [user]);
 
   useEffect(() => {
-    if (!selectedPet) return;
-
-    const fetchFeedingData = async () => {
-      const today = new Date().toISOString().split("T")[0];
-      const { data: feeds, error } = await supabase
-        .from("feeds")
-        .select("*")
-        .eq("pet_id", selectedPet.id)
-        .gte("timestamp", `${today}T00:00:00`)
-        .lte("timestamp", `${today}T23:59:59`)
-        .order("timestamp", { ascending: false });
-
-      if (error) {
-        console.error("Error fetching feeds:", error);
-      } else {
-        if (feeds.length > 0) {
-          setLastFeeding(feeds[0].timestamp);
-          const total = feeds.reduce((sum, feed) => sum + feed.amount_g, 0);
-          setTodaysTotal(total);
-        } else {
-          setLastFeeding(null);
-          setTodaysTotal(0);
-        }
-      }
-    };
-
     fetchFeedingData();
   }, [selectedPet]);
+
+  // Pull-to-refresh handler
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetchPets(); // Re-fetch pets
+      await fetchFeedingData(); // Re-fetch feeding data
+    } catch (error) {
+      Alert.alert("Error", "Failed to refresh data");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleFeed = async () => {
+    if (!selectedPet) {
+      Alert.alert("Error", "Please add a pet first.");
+      return;
+    }
+    if (!amount || amount <= 0) {
+      Alert.alert("Error", "Please enter a valid amount greater than 0.");
+      return;
+    }
+
+    setIsFeeding(true);
+    try {
+      const { error } = await supabase.from("feeds").insert({
+        user_id: user.id,
+        pet_id: selectedPet.id,
+        amount_g: amount,
+        status: "pending",
+      });
+      if (error) {
+        Alert.alert("Error", "Failed to trigger feed: " + error.message);
+      } else {
+        Alert.alert("Success", "Feed triggered!");
+        setAmount(10);
+        await fetchFeedingData(); // Refresh feeding data after a feed
+      }
+    } catch (error) {
+      Alert.alert("Error", "An unexpected error occurred.");
+    } finally {
+      setIsFeeding(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -114,51 +168,38 @@ export default function DashboardScreen() {
     );
   }
 
-  const handleFeed = async () => {
-    if (!selectedPet) {
-      Alert.alert("Error", "Please add a pet first.");
-      return;
-    }
-
-    const { error } = await supabase.from("feeds").insert({
-      user_id: user.id,
-      pet_id: selectedPet.id,
-      amount_g: amount,
-      status: "pending",
-    });
-    if (error) {
-      Alert.alert("Error", "Failed to trigger feed");
-    } else {
-      Alert.alert("Success", "Feed triggered!");
-    }
-  };
-
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.openDrawer()}>
-          <Ionicons name="menu-outline" size={30} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Pet Feeder</Text>
-      </View>
+    <ScrollView
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
+
       <Text style={styles.welcomeText}>
-        Welcome back, {user.email.split("@")[0]}!
+        Welcome, {user.email.split("@")[0]}!
       </Text>
       {pets.length > 0 ? (
         <>
           <View style={styles.petSelector}>
             <Text style={styles.inputLabel}>Select Pet</Text>
-            <View style={styles.pickerContainer}>
-              <Text>{selectedPet?.name || "Select a pet"}</Text>
-              <Ionicons name="chevron-down-outline" size={20} color="#666" />
-            </View>
+            <Picker
+              selectedValue={selectedPet?.id}
+              style={styles.picker}
+              onValueChange={(itemValue) => {
+                const newSelectedPet = pets.find((p) => p.id === itemValue);
+                setSelectedPet(newSelectedPet);
+              }}
+            >
+              {pets.map((pet) => (
+                <Picker.Item key={pet.id} label={pet.name} value={pet.id} />
+              ))}
+            </Picker>
           </View>
           {selectedPet && (
             <>
               <View style={styles.statusCard}>
-                <Text style={styles.cardTitle}>
-                  {selectedPet.name}'s Status
-                </Text>
+                <Text style={styles.cardTitle}>{selectedPet.name}'s Status</Text>
                 <View style={styles.statusItem}>
                   <Ionicons
                     name="time-outline"
@@ -168,9 +209,26 @@ export default function DashboardScreen() {
                   />
                   <Text style={styles.statusText}>
                     Last Feeding:{" "}
-                    {lastFeeding
-                      ? new Date(lastFeeding).toLocaleString()
-                      : "No feedings recorded"}
+                    {lastFeeding ? (
+                      (() => {
+                        const feedDate = new Date(lastFeeding);
+                        const localDate = new Date(
+                          feedDate.getTime() -
+                            feedDate.getTimezoneOffset() * 60 * 1000
+                        );
+                        return localDate.toLocaleString("en-US", {
+                          year: "numeric",
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                          hour12: true,
+                        });
+                      })()
+                    ) : (
+                      "No feedings recorded"
+                    )}
                   </Text>
                 </View>
                 <View style={styles.statusItem}>
@@ -198,14 +256,21 @@ export default function DashboardScreen() {
                   <TouchableOpacity
                     style={styles.feedButton}
                     onPress={handleFeed}
+                    disabled={isFeeding}
                   >
-                    <Ionicons
-                      name="play-circle-outline"
-                      size={24}
-                      color="#fff"
-                      style={styles.icon}
-                    />
-                    <Text style={styles.buttonText}>Feed Now</Text>
+                    {isFeeding ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="play-circle-outline"
+                          size={24}
+                          color="#fff"
+                          style={styles.icon}
+                        />
+                        <Text style={styles.buttonText}>Feed Now</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                 </View>
               </View>
@@ -217,7 +282,7 @@ export default function DashboardScreen() {
           No pets added. Go to "Pets" to add one!
         </Text>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -245,26 +310,23 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   petSelector: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 20,
   },
   inputLabel: {
     fontSize: 16,
     color: "#333",
+    marginBottom: 5,
   },
-  pickerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f0f0f0",
+  picker: {
+    width: "100%",
+    backgroundColor: "#fff",
     borderRadius: 5,
-    padding: 10,
+    elevation: 2,
   },
   statusCard: {
     backgroundColor: "#fff",
     borderRadius: 10,
-    padding: 15,
+    padding: 20,
     marginBottom: 20,
     elevation: 3,
     shadowColor: "#000",
@@ -293,7 +355,7 @@ const styles = StyleSheet.create({
   feedCard: {
     backgroundColor: "#fff",
     borderRadius: 10,
-    padding: 15,
+    padding: 20,
     elevation: 3,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -304,12 +366,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 10,
   },
   input: {
     backgroundColor: "#f0f0f0",
     borderRadius: 5,
     padding: 10,
-    width: 60,
+    width: 80,
     textAlign: "center",
     fontSize: 16,
     color: "#333",
@@ -322,6 +385,10 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     alignItems: "center",
     elevation: 5,
+  },
+  quickFeedButton: {
+    backgroundColor: "#388E3C",
+    marginTop: 10,
   },
   buttonText: {
     color: "#fff",
