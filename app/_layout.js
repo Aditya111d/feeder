@@ -2,12 +2,12 @@ import { Drawer } from "expo-router/drawer";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import { View, Text, StyleSheet } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, usePathname } from "expo-router";
 import { DrawerItemList, DrawerItem } from "@react-navigation/drawer";
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 
 const CustomDrawerContent = (props) => {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const router = useRouter();
 
   const handleLogOut = async () => {
@@ -17,52 +17,83 @@ const CustomDrawerContent = (props) => {
 
   return (
     <View style={styles.drawerContainer}>
-      {/* Add "Pet Feeder" title */}
+      {/* Drawer Header */}
       <View style={styles.drawerHeader}>
         <Text style={styles.drawerHeaderText}>Pet Feeder</Text>
       </View>
 
-      {/* Render drawer items */}
+      {/* Drawer Items */}
       <View style={{ flex: 1 }}>
-        <DrawerItemList {...props} />
-      </View>
-
-      {/* Log Out button at the bottom */}
-      <View style={styles.logoutContainer}>
-        <DrawerItem
-          label="Log Out"
-          onPress={handleLogOut}
-          icon={({ size, color }) => (
-            <Ionicons name="log-out-outline" size={size} color={color} />
-          )}
-          style={styles.drawerItem}
-          labelStyle={styles.labelStyle}
-          activeTintColor="#4CAF50"
-          inactiveTintColor="#333"
-        />
+        {user ? (
+          <>
+            {/* Show only authenticated screens in the drawer */}
+            <DrawerItemList {...props} />
+            {/* Log Out button */}
+            <View style={styles.logoutContainer}>
+              <DrawerItem
+                label="Log Out"
+                onPress={handleLogOut}
+                icon={({ size, color }) => (
+                  <Ionicons name="log-out-outline" size={size} color={color} />
+                )}
+                style={styles.drawerItem}
+                labelStyle={styles.labelStyle}
+                activeTintColor="#4CAF50"
+                inactiveTintColor="#333"
+              />
+            </View>
+          </>
+        ) : (
+          <Text style={styles.unauthenticatedText}>
+            Please log in to access the menu.
+          </Text>
+        )}
       </View>
     </View>
   );
 };
 
 function AppContent() {
-  const { user, loading } = useAuth(); // Get user and loading state from AuthContext
-  const router = useRouter(); // Get the router object for navigation
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [isMounted, setIsMounted] = useState(false);
+  const [navigatorReady, setNavigatorReady] = useState(false);
+  const hasNavigated = useRef(false);
 
+  // Mark the component as mounted after the first render
   useEffect(() => {
-    if (!loading) {
-      // If the user is logged in, redirect to the dashboard
-      if (user) {
-        router.replace("/dashboard");
-      } else {
-        // If the user is not logged in, redirect to the welcome screen
-        router.replace("/welcome");
-      }
-    }
-  }, [loading, user, router]);
+    setIsMounted(true);
+  }, []);
 
-  if (loading) {
-    // Show a loading indicator while checking the authentication state
+  // Mark the navigator as ready after the Drawer is mounted
+  useEffect(() => {
+    setNavigatorReady(true);
+  }, []);
+
+  // Handle redirect after the navigator is ready
+  useEffect(() => {
+    if (loading || !isMounted || !navigatorReady || hasNavigated.current)
+      return;
+
+    console.log("Current pathname:", pathname);
+    if (
+      user &&
+      !["/dashboard", "/schedule", "/pets", "/pet-videos", "/control"].includes(
+        pathname
+      )
+    ) {
+      console.log("Redirecting to /dashboard for user:", user?.email);
+      router.replace("/dashboard");
+      hasNavigated.current = true;
+    } else if (!user && !["/welcome", "/login", "/signup"].includes(pathname)) {
+      console.log("Redirecting to /welcome for no user");
+      router.replace("/welcome");
+      hasNavigated.current = true;
+    }
+  }, [loading, user, isMounted, navigatorReady, pathname]);
+
+  if (loading || !isMounted) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <Text>Loading...</Text>
@@ -72,29 +103,26 @@ function AppContent() {
 
   return (
     <Drawer
+      initialRouteName="dashboard"
       screenOptions={{
         headerStyle: { backgroundColor: "#4CAF50" },
         headerTintColor: "#fff",
         headerTitleStyle: { fontWeight: "bold" },
-        drawerStyle: {
-          backgroundColor: "#fff",
-        },
+        drawerStyle: { backgroundColor: "#fff" },
         drawerActiveTintColor: "#4CAF50",
         drawerInactiveTintColor: "#333",
       }}
       drawerContent={(props) => <CustomDrawerContent {...props} />}
     >
-      {/* Welcome */}
+      {/* Welcome (not in drawer) */}
       <Drawer.Screen
         name="welcome"
         options={{
-          drawerLabel: "Welcome",
+          drawerItemStyle: { display: "none" }, // Hide from drawer
           title: "Welcome",
-          drawerIcon: ({ size, color }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
-          ),
         }}
       />
+
       {/* Dashboard */}
       <Drawer.Screen
         name="dashboard"
@@ -155,27 +183,21 @@ function AppContent() {
         }}
       />
 
-      {/* Login */}
+      {/* Login (not in drawer) */}
       <Drawer.Screen
         name="login"
         options={{
-          drawerLabel: "Login",
+          drawerItemStyle: { display: "none" }, // Hide from drawer
           title: "Login",
-          drawerIcon: ({ size, color }) => (
-            <Ionicons name="log-in-outline" size={size} color={color} />
-          ),
         }}
       />
 
-      {/* Signup */}
+      {/* Signup (not in drawer) */}
       <Drawer.Screen
         name="signup"
         options={{
-          drawerLabel: "Signup",
+          drawerItemStyle: { display: "none" }, // Hide from drawer
           title: "Signup",
-          drawerIcon: ({ size, color }) => (
-            <Ionicons name="person-add-outline" size={size} color={color} />
-          ),
         }}
       />
     </Drawer>
@@ -193,7 +215,7 @@ export default function Layout() {
 const styles = StyleSheet.create({
   drawerContainer: {
     flex: 1,
-    paddingTop: 20, // Add padding to avoid overlap with status bar
+    paddingTop: 20,
   },
   drawerHeader: {
     padding: 20,
@@ -213,6 +235,12 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   logoutContainer: {
-    marginBottom: 20, // Add margin to the bottom for spacing
+    marginBottom: 20,
+  },
+  unauthenticatedText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 20,
   },
 });
