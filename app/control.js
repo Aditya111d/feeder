@@ -3,42 +3,106 @@ import {
   StyleSheet,
   View,
   Text,
-  TouchableOpacity,
   FlatList,
-  Alert,
-  TextInput,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 import { Picker } from "@react-native-picker/picker";
+import usePullToRefresh from "../hooks/usePullToRefresh";
 
 export default function ControlScreen() {
   const { user } = useAuth();
   const [feeds, setFeeds] = useState([]);
   const [pets, setPets] = useState([]);
   const [selectedPet, setSelectedPet] = useState("");
-  const [amount, setAmount] = useState("");
+  const [subscription, setSubscription] = useState(null);
 
-  // Fetch pets and set initial selectedPet
+  // Fetch pets
+  const fetchPets = async () => {
+    console.log("Fetching pets...");
+    const { data, error } = await supabase
+      .from("pets")
+      .select("id, name")
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Error fetching pets:", error);
+      throw new Error("Failed to load pets");
+    } else {
+      console.log("Fetched pets:", data);
+      setPets(data);
+      if (data.length > 0 && !selectedPet) {
+        console.log("Setting initial selectedPet:", data[0].id.toString());
+        setSelectedPet(data[0].id.toString());
+      }
+    }
+  };
+
+  // Fetch feeds
+  const fetchFeeds = async () => {
+    if (!selectedPet) {
+      console.log("No selectedPet, skipping fetchFeeds");
+      return;
+    }
+    console.log("Fetching feeds for pet:", selectedPet);
+    const { data, error } = await supabase
+      .from("feeds")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("pet_id", selectedPet)
+      .order("timestamp", { ascending: false })
+      .limit(10);
+    if (error) {
+      console.error("Error fetching feeds:", error);
+      throw new Error("Failed to load feeds");
+    } else {
+      console.log("Fetched feeds:", data);
+      setFeeds(data);
+    }
+  };
+
+  // Use the pull-to-refresh hook
+  const { refreshControl } = usePullToRefresh(async () => {
+    console.log("Starting pull-to-refresh...");
+    // Unsubscribe from real-time updates during refresh
+    if (subscription) {
+      console.log("Unsubscribing from real-time updates...");
+      subscription.unsubscribe();
+      setSubscription(null);
+    }
+
+    // Fetch data
+    await fetchPets();
+    await fetchFeeds();
+
+    // Re-subscribe to real-time updates after refresh
+    if (selectedPet) {
+      console.log("Re-subscribing to real-time updates for pet:", selectedPet);
+      const newSubscription = supabase
+        .channel(`feeds-${selectedPet}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "feeds",
+            filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet}`,
+          },
+          (payload) => {
+            console.log("Real-time update received:", payload);
+            setFeeds((currentFeeds) =>
+              [payload.new, ...currentFeeds].slice(0, 10)
+            );
+          }
+        )
+        .subscribe();
+      setSubscription(newSubscription);
+    }
+    console.log("Pull-to-refresh completed.");
+  });
+
+  // Initial fetch on mount
   useEffect(() => {
     if (!user) return;
-
-    const fetchPets = async () => {
-      const { data, error } = await supabase
-        .from("pets")
-        .select("id, name")
-        .eq("user_id", user.id);
-      if (error) {
-        console.error("Error fetching pets:", error);
-      } else {
-        setPets(data);
-        if (data.length > 0 && !selectedPet) {
-          setSelectedPet(data[0].id.toString());
-        }
-      }
-    };
-
     fetchPets();
   }, [user]);
 
@@ -46,25 +110,17 @@ export default function ControlScreen() {
   useEffect(() => {
     if (!user || !selectedPet) return;
 
-    const fetchFeeds = async () => {
-      const { data, error } = await supabase
-        .from("feeds")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("pet_id", selectedPet)
-        .order("timestamp", { ascending: false })
-        .limit(10);
-      if (error) {
-        console.error("Error fetching feeds:", error);
-      } else {
-        setFeeds(data);
-      }
-    };
-
     fetchFeeds();
 
+    // Clean up previous subscription if it exists
+    if (subscription) {
+      console.log("Cleaning up previous subscription...");
+      subscription.unsubscribe();
+    }
+
     // Set up real-time subscription
-    const subscription = supabase
+    console.log("Setting up real-time subscription for pet:", selectedPet);
+    const newSubscription = supabase
       .channel(`feeds-${selectedPet}`)
       .on(
         "postgres_changes",
@@ -75,6 +131,7 @@ export default function ControlScreen() {
           filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet}`,
         },
         (payload) => {
+          console.log("Real-time update received:", payload);
           setFeeds((currentFeeds) =>
             [payload.new, ...currentFeeds].slice(0, 10)
           );
@@ -82,44 +139,19 @@ export default function ControlScreen() {
       )
       .subscribe();
 
-    // Cleanup subscription
+    setSubscription(newSubscription);
+
     return () => {
-      subscription.unsubscribe();
+      console.log("Unsubscribing from real-time updates on cleanup...");
+      newSubscription.unsubscribe();
     };
   }, [user, selectedPet]);
 
-  const handleFeed = async () => {
-    if (!selectedPet) {
-      Alert.alert("Error", "Please select a pet");
-      return;
-    }
-    if (!amount || isNaN(amount) || Number(amount) <= 0) {
-      Alert.alert("Error", "Please enter a valid amount");
-      return;
-    }
-    const { error } = await supabase.from("feeds").insert({
-      user_id: user.id,
-      pet_id: Number(selectedPet),
-      status: "pending",
-      amount_g: Number(amount),
-    });
-    if (error) {
-      Alert.alert("Error", "Failed to trigger feed");
-    } else {
-      setAmount("");
-      Alert.alert("Success", "Feed triggered!");
-    }
-  };
-
   const renderFeedItem = ({ item }) => {
-    // Convert UTC timestamp to local timezone
     const feedDate = new Date(item.timestamp);
-    // Adjust for local timezone (optional if toLocaleString handles it correctly)
     const localDate = new Date(
       feedDate.getTime() - feedDate.getTimezoneOffset() * 60 * 1000
     );
-
-    // Format in 12-hour AM/PM
     const formattedTime = localDate.toLocaleString("en-US", {
       year: "numeric",
       month: "2-digit",
@@ -142,13 +174,16 @@ export default function ControlScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Control Panel</Text>
+      <Text style={styles.title}>Feed History</Text>
       <View style={styles.pickerContainer}>
         <Text style={styles.subtitle}>Select Pet:</Text>
         <Picker
           selectedValue={selectedPet}
           style={styles.picker}
-          onValueChange={(itemValue) => setSelectedPet(itemValue)}
+          onValueChange={(itemValue) => {
+            console.log("Selected pet changed to:", itemValue);
+            setSelectedPet(itemValue);
+          }}
         >
           {pets.length === 0 ? (
             <Picker.Item label="No pets available" value="" />
@@ -163,31 +198,6 @@ export default function ControlScreen() {
           )}
         </Picker>
       </View>
-      <View style={styles.inputContainer}>
-        <Ionicons
-          name="nutrition-outline"
-          size={24}
-          color="#4CAF50"
-          style={styles.inputIcon}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Amount (grams)"
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="numeric"
-          placeholderTextColor="#333"
-        />
-      </View>
-      <TouchableOpacity style={styles.feedButton} onPress={handleFeed}>
-        <Ionicons
-          name="fast-food-outline"
-          size={24}
-          color="#fff"
-          style={styles.icon}
-        />
-        <Text style={styles.buttonText}>Trigger Feed</Text>
-      </TouchableOpacity>
       <Text style={styles.historyTitle}>
         Recent Feeds for{" "}
         {pets.find((p) => p.id.toString() === selectedPet)?.name || "Selected Pet"}
@@ -200,6 +210,8 @@ export default function ControlScreen() {
         ListEmptyComponent={
           <Text style={styles.feedText}>No feed history available</Text>
         }
+        refreshControl={refreshControl}
+        extraData={selectedPet}
       />
     </View>
   );
@@ -208,8 +220,6 @@ export default function ControlScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
     backgroundColor: "#f5f5f5",
     padding: 20,
   },
@@ -233,50 +243,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     elevation: 2,
-  },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    width: "100%",
-    marginBottom: 20,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-  },
-  inputIcon: {
-    marginLeft: 15,
-  },
-  input: {
-    flex: 1,
-    padding: 15,
-    fontSize: 16,
-    color: "#333",
-  },
-  feedButton: {
-    flexDirection: "row",
-    backgroundColor: "#4CAF50",
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 25,
-    marginBottom: 20,
-    alignItems: "center",
-    elevation: 5,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  icon: {
-    marginRight: 10,
   },
   historyTitle: {
     fontSize: 20,

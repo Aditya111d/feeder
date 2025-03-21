@@ -175,8 +175,8 @@ function AppContent() {
       <Drawer.Screen
         name="control"
         options={{
-          drawerLabel: "Control",
-          title: "Control Panel",
+          drawerLabel: "Feeding History",
+          title: "Feeding History",
           drawerIcon: ({ size, color }) => (
             <Ionicons name="settings-outline" size={size} color={color} />
           ),
