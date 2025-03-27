@@ -1,4 +1,3 @@
-// app/schedule.js
 import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
@@ -12,14 +11,17 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
-import { Picker } from "@react-native-picker/picker"; // Already updated import
+import { Picker } from "@react-native-picker/picker";
+import DateTimePicker from "@react-native-community/datetimepicker"; // New import
 
 export default function ScheduleScreen() {
   const [pets, setPets] = useState([]);
   const [selectedPet, setSelectedPet] = useState(null);
   const [schedules, setSchedules] = useState([]);
-  const [time, setTime] = useState("12:00");
+  const [time, setTime] = useState("12:00"); // Initial time display
   const [amount, setAmount] = useState("");
+  const [showTimePicker, setShowTimePicker] = useState(false); // Toggle for picker visibility
+  const [selectedTime, setSelectedTime] = useState(new Date()); // Date object for picker
 
   useEffect(() => {
     fetchPets();
@@ -80,7 +82,8 @@ export default function ScheduleScreen() {
       Alert.alert("Error", "Failed to add schedule");
     } else {
       Alert.alert("Success", "Schedule added successfully!");
-      setTime("12:00");
+      setTime("12:00"); // Reset to default
+      setSelectedTime(new Date()); // Reset picker time
       setAmount("");
       fetchSchedules();
     }
@@ -107,6 +110,21 @@ export default function ScheduleScreen() {
       Alert.alert("Error", "Failed to delete schedule");
     } else {
       fetchSchedules();
+    }
+  };
+
+  // Handle time selection from DateTimePicker
+  const onTimeChange = (event, selected) => {
+    setShowTimePicker(false); // Hide picker after selection
+    if (selected) {
+      setSelectedTime(selected);
+      // Format time as HH:MM (24-hour)
+      const formattedTime = selected.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      setTime(formattedTime);
     }
   };
 
@@ -143,10 +161,10 @@ export default function ScheduleScreen() {
             <Picker
               selectedValue={
                 selectedPet ? selectedPet.id.toString() : undefined
-              } // Convert id to string
+              }
               style={styles.picker}
               onValueChange={(itemValue) => {
-                const pet = pets.find((p) => p.id.toString() === itemValue); // Match as string
+                const pet = pets.find((p) => p.id.toString() === itemValue);
                 setSelectedPet(pet);
               }}
             >
@@ -155,7 +173,7 @@ export default function ScheduleScreen() {
                   key={pet.id}
                   label={pet.name}
                   value={pet.id.toString()}
-                /> // Convert value to string
+                />
               ))}
             </Picker>
             {selectedPet && (
@@ -165,12 +183,17 @@ export default function ScheduleScreen() {
                 </Text>
                 <View style={styles.inputRow}>
                   <Text style={styles.inputLabel}>Time</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={time}
-                    onChangeText={setTime}
-                    placeholder="HH:MM"
-                  />
+                  <TouchableOpacity onPress={() => setShowTimePicker(true)}>
+                    <Text style={styles.input}>{time}</Text>
+                  </TouchableOpacity>
+                  {showTimePicker && (
+                    <DateTimePicker
+                      value={selectedTime}
+                      mode="time"
+                      display="default"
+                      onChange={onTimeChange}
+                    />
+                  )}
                 </View>
                 <TextInput
                   style={styles.input}
