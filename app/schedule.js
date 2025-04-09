@@ -11,21 +11,34 @@ import {
   Modal,
   Animated,
   Platform,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { Picker } from "@react-native-picker/picker";
 
 export default function ScheduleScreen() {
   const [pets, setPets] = useState([]);
   const [selectedPet, setSelectedPet] = useState(null);
   const [schedules, setSchedules] = useState([]);
-  const [time, setTime] = useState("12:00 PM");
+  const [time, setTime] = useState(getCurrentTime()); // Set initial time to current time
   const [amount, setAmount] = useState("");
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [date, setDate] = useState(new Date()); // For DateTimePicker
+  const [date, setDate] = useState(new Date());
+  const [showDropdown, setShowDropdown] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
+
+  // Function to get current time in 12-hour format
+  function getCurrentTime() {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const period = hour >= 12 ? "PM" : "AM";
+    const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    return `${hour12.toString().padStart(2, "0")}:${minute
+      .toString()
+      .padStart(2, "0")} ${period}`;
+  }
 
   useEffect(() => {
     fetchPets();
@@ -72,7 +85,10 @@ export default function ScheduleScreen() {
 
   const handleAddSchedule = async () => {
     if (!time || !amount || Number(amount) <= 0) {
-      Alert.alert("Error", "Please enter a valid time and amount (greater than 0)");
+      Alert.alert(
+        "Error",
+        "Please enter a valid time and amount (greater than 0)"
+      );
       return;
     }
 
@@ -121,24 +137,21 @@ export default function ScheduleScreen() {
   };
 
   const resetForm = () => {
-    setTime("12:00 PM");
+    setTime(getCurrentTime()); // Reset to current time instead of static "12:00 PM"
     setDate(new Date());
     setAmount("");
   };
 
   const openTimePicker = () => {
-    // Initialize DateTimePicker with current time or selected time
-    if (time !== "12:00 PM") {
-      const [hourMinute, period] = time.split(" ");
-      const [hour, minute] = hourMinute.split(":");
-      let hourNum = parseInt(hour, 10);
-      if (period === "PM" && hourNum !== 12) hourNum += 12;
-      if (period === "AM" && hourNum === 12) hourNum = 0;
-      const newDate = new Date();
-      newDate.setHours(hourNum);
-      newDate.setMinutes(parseInt(minute, 10));
-      setDate(newDate);
-    }
+    const [hourMinute, period] = time.split(" ");
+    const [hour, minute] = hourMinute.split(":");
+    let hourNum = parseInt(hour, 10);
+    if (period === "PM" && hourNum !== 12) hourNum += 12;
+    if (period === "AM" && hourNum === 12) hourNum = 0;
+    const newDate = new Date();
+    newDate.setHours(hourNum);
+    newDate.setMinutes(parseInt(minute, 10));
+    setDate(newDate);
     setShowTimePicker(true);
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -158,7 +171,11 @@ export default function ScheduleScreen() {
     const minute = currentDate.getMinutes();
     const period = hour >= 12 ? "PM" : "AM";
     const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-    setTime(`${hour12.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")} ${period}`);
+    setTime(
+      `${hour12.toString().padStart(2, "0")}:${minute
+        .toString()
+        .padStart(2, "0")} ${period}`
+    );
     closeTimePicker();
   };
 
@@ -210,6 +227,39 @@ export default function ScheduleScreen() {
     </View>
   );
 
+  const renderDropdown = () => {
+    return (
+      <Modal
+        visible={showDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDropdown(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowDropdown(false)}>
+          <View style={styles.dropdownOverlay}>
+            <View style={styles.dropdownContainer}>
+              {pets.map((pet) => (
+                <TouchableOpacity
+                  key={pet.id}
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setSelectedPet(pet);
+                    setShowDropdown(false);
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>{pet.name}</Text>
+                  {selectedPet?.id === pet.id && (
+                    <Ionicons name="checkmark" size={18} color="#4CAF50" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Feeding Schedule</Text>
@@ -217,24 +267,20 @@ export default function ScheduleScreen() {
         <>
           <View style={styles.formCard}>
             <Text style={styles.cardTitle}>Select Pet</Text>
-            <Picker
-              selectedValue={
-                selectedPet ? selectedPet.id.toString() : undefined
-              }
-              style={styles.picker}
-              onValueChange={(itemValue) => {
-                const pet = pets.find((p) => p.id.toString() === itemValue);
-                setSelectedPet(pet);
-              }}
+            <TouchableOpacity
+              style={styles.dropdownButton}
+              onPress={() => setShowDropdown(true)}
             >
-              {pets.map((pet) => (
-                <Picker.Item
-                  key={pet.id}
-                  label={pet.name}
-                  value={pet.id.toString()}
-                />
-              ))}
-            </Picker>
+              <Text style={styles.dropdownButtonText}>
+                {selectedPet ? selectedPet.name : "Select a pet"}
+              </Text>
+              <Ionicons
+                name={showDropdown ? "chevron-up" : "chevron-down"}
+                size={18}
+                color="#666"
+              />
+            </TouchableOpacity>
+            {renderDropdown()}
             {selectedPet && (
               <>
                 <Text style={styles.cardTitle}>
@@ -271,7 +317,9 @@ export default function ScheduleScreen() {
                           value={date}
                           mode="time"
                           is24Hour={false}
-                          display={Platform.OS === "ios" ? "spinner" : "default"}
+                          display={
+                            Platform.OS === "ios" ? "spinner" : "default"
+                          }
                           onChange={onTimeChange}
                           textColor="#333"
                           style={styles.dateTimePicker}
@@ -282,13 +330,19 @@ export default function ScheduleScreen() {
                               style={styles.cancelButton}
                               onPress={closeTimePicker}
                             >
-                              <Text style={styles.cancelButtonText}>Cancel</Text>
+                              <Text style={styles.cancelButtonText}>
+                                Cancel
+                              </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               style={styles.confirmButton}
-                              onPress={() => onTimeChange({ type: "set" }, date)}
+                              onPress={() =>
+                                onTimeChange({ type: "set" }, date)
+                              }
                             >
-                              <Text style={styles.confirmButtonText}>Confirm</Text>
+                              <Text style={styles.confirmButtonText}>
+                                Confirm
+                              </Text>
                             </TouchableOpacity>
                           </View>
                         )}
@@ -296,13 +350,16 @@ export default function ScheduleScreen() {
                     </View>
                   </Modal>
                 )}
-                <TextInput
-                  style={styles.input}
-                  placeholder="Amount (g)"
-                  value={amount}
-                  onChangeText={setAmount}
-                  keyboardType="numeric"
-                />
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Amount (g)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Amount in grams"
+                    value={amount}
+                    onChangeText={setAmount}
+                    keyboardType="numeric"
+                  />
+                </View>
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={handleAddSchedule}
@@ -367,16 +424,49 @@ const styles = StyleSheet.create({
     backgroundColor: "#f0f0f0",
     borderRadius: 5,
     padding: 10,
-    width: 100,
+    width: 140,
     textAlign: "center",
     fontSize: 16,
     color: "#333",
   },
-  picker: {
-    width: "100%",
-    backgroundColor: "#f0f0f0",
-    borderRadius: 5,
+  dropdownButton: {
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
     marginBottom: 10,
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  dropdownContainer: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    paddingVertical: 5,
+    elevation: 5,
+  },
+  dropdownItem: {
+    padding: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: "#333",
   },
   timeButton: {
     flexDirection: "row",

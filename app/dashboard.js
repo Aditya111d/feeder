@@ -8,25 +8,25 @@ import {
   TextInput,
   ActivityIndicator,
   ScrollView,
+  Modal,
+  TouchableWithoutFeedback,
 } from "react-native";
-import { router, useNavigation } from "expo-router";
+import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
-import { Picker } from "@react-native-picker/picker";
-import usePullToRefresh from "../hooks/usePullToRefresh"; // Adjusted import path
+import usePullToRefresh from "../hooks/usePullToRefresh";
 
 export default function DashboardScreen() {
   const { user, loading } = useContext(AuthContext);
-  const navigation = useNavigation();
   const [pets, setPets] = useState([]);
   const [selectedPet, setSelectedPet] = useState(null);
   const [lastFeeding, setLastFeeding] = useState(null);
   const [todaysTotal, setTodaysTotal] = useState(0);
   const [amount, setAmount] = useState(10);
   const [isFeeding, setIsFeeding] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
 
-  // Function to fetch pets
   const fetchPets = async () => {
     const { data, error } = await supabase
       .from("pets")
@@ -43,7 +43,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Function to fetch feeding data
   const fetchFeedingData = async () => {
     if (!selectedPet) return;
 
@@ -71,12 +70,10 @@ export default function DashboardScreen() {
     }
   };
 
-  // Use the pull-to-refresh hook
   const { refreshControl } = usePullToRefresh(async () => {
     await Promise.all([fetchPets(), fetchFeedingData()]);
   });
 
-  // Initial fetch on mount
   useEffect(() => {
     if (!user) return;
     fetchPets();
@@ -116,6 +113,39 @@ export default function DashboardScreen() {
     } finally {
       setIsFeeding(false);
     }
+  };
+
+  const renderDropdown = () => {
+    return (
+      <Modal
+        visible={showDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDropdown(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowDropdown(false)}>
+          <View style={styles.dropdownOverlay}>
+            <View style={styles.dropdownContainer}>
+              {pets.map((pet) => (
+                <TouchableOpacity
+                  key={pet.id}
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setSelectedPet(pet);
+                    setShowDropdown(false);
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>{pet.name}</Text>
+                  {selectedPet?.id === pet.id && (
+                    <Ionicons name="checkmark" size={18} color="#4CAF50" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    );
   };
 
   if (loading) {
@@ -170,27 +200,21 @@ export default function DashboardScreen() {
         <>
           <View style={styles.petSelector}>
             <Text style={styles.inputLabel}>Select Pet</Text>
-            <Picker
-              selectedValue={
-                selectedPet ? selectedPet.id.toString() : undefined
-              }
-              style={styles.picker}
-              onValueChange={(itemValue) => {
-                const newSelectedPet = pets.find(
-                  (p) => p.id.toString() === itemValue
-                );
-                setSelectedPet(newSelectedPet);
-              }}
+            <TouchableOpacity
+              style={styles.dropdownButton}
+              onPress={() => setShowDropdown(true)}
             >
-              {pets.map((pet) => (
-                <Picker.Item
-                  key={pet.id}
-                  label={pet.name}
-                  value={pet.id.toString()}
-                />
-              ))}
-            </Picker>
+              <Text style={styles.dropdownButtonText}>
+                {selectedPet ? selectedPet.name : "Select a pet"}
+              </Text>
+              <Ionicons
+                name={showDropdown ? "chevron-up" : "chevron-down"}
+                size={18}
+                color="#666"
+              />
+            </TouchableOpacity>
           </View>
+          {renderDropdown()}
           {selectedPet && (
             <>
               <View style={styles.statusCard}>
@@ -287,16 +311,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f5f5",
     padding: 20,
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  headerTitle: {
+  title: {
     fontSize: 24,
     fontWeight: "bold",
     color: "#333",
-    marginLeft: 10,
+    marginBottom: 10,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "#666",
+    marginBottom: 20,
   },
   welcomeText: {
     fontSize: 22,
@@ -312,11 +336,43 @@ const styles = StyleSheet.create({
     color: "#333",
     marginBottom: 5,
   },
-  picker: {
-    width: "100%",
+  dropdownButton: {
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  dropdownContainer: {
     backgroundColor: "#fff",
-    borderRadius: 5,
-    elevation: 2,
+    borderRadius: 8,
+    paddingVertical: 5,
+    elevation: 5,
+  },
+  dropdownItem: {
+    padding: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: "#333",
   },
   statusCard: {
     backgroundColor: "#fff",
@@ -381,9 +437,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 5,
   },
-  quickFeedButton: {
-    backgroundColor: "#388E3C",
-    marginTop: 10,
+  button: {
+    flexDirection: "row",
+    backgroundColor: "#4CAF50",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    alignItems: "center",
+    marginBottom: 10,
+    elevation: 5,
   },
   buttonText: {
     color: "#fff",

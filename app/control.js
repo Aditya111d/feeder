@@ -4,20 +4,23 @@ import {
   View,
   Text,
   FlatList,
+  TouchableOpacity,
+  Modal,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
-import { Picker } from "@react-native-picker/picker";
+import { Ionicons } from "@expo/vector-icons";
 import usePullToRefresh from "../hooks/usePullToRefresh";
 
 export default function ControlScreen() {
   const { user } = useAuth();
   const [feeds, setFeeds] = useState([]);
   const [pets, setPets] = useState([]);
-  const [selectedPet, setSelectedPet] = useState("");
+  const [selectedPet, setSelectedPet] = useState(null);
+  const [showDropdown, setShowDropdown] = useState(false);
   const [subscription, setSubscription] = useState(null);
 
-  // Fetch pets
   const fetchPets = async () => {
     console.log("Fetching pets...");
     const { data, error } = await supabase
@@ -31,24 +34,23 @@ export default function ControlScreen() {
       console.log("Fetched pets:", data);
       setPets(data);
       if (data.length > 0 && !selectedPet) {
-        console.log("Setting initial selectedPet:", data[0].id.toString());
-        setSelectedPet(data[0].id.toString());
+        console.log("Setting initial selectedPet:", data[0]);
+        setSelectedPet(data[0]);
       }
     }
   };
 
-  // Fetch feeds
   const fetchFeeds = async () => {
     if (!selectedPet) {
       console.log("No selectedPet, skipping fetchFeeds");
       return;
     }
-    console.log("Fetching feeds for pet:", selectedPet);
+    console.log("Fetching feeds for pet:", selectedPet.id);
     const { data, error } = await supabase
       .from("feeds")
       .select("*")
       .eq("user_id", user.id)
-      .eq("pet_id", selectedPet)
+      .eq("pet_id", selectedPet.id)
       .order("timestamp", { ascending: false })
       .limit(10);
     if (error) {
@@ -60,32 +62,31 @@ export default function ControlScreen() {
     }
   };
 
-  // Use the pull-to-refresh hook
   const { refreshControl } = usePullToRefresh(async () => {
     console.log("Starting pull-to-refresh...");
-    // Unsubscribe from real-time updates during refresh
     if (subscription) {
       console.log("Unsubscribing from real-time updates...");
       subscription.unsubscribe();
       setSubscription(null);
     }
 
-    // Fetch data
     await fetchPets();
     await fetchFeeds();
 
-    // Re-subscribe to real-time updates after refresh
     if (selectedPet) {
-      console.log("Re-subscribing to real-time updates for pet:", selectedPet);
+      console.log(
+        "Re-subscribing to real-time updates for pet:",
+        selectedPet.id
+      );
       const newSubscription = supabase
-        .channel(`feeds-${selectedPet}`)
+        .channel(`feeds-${selectedPet.id}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "feeds",
-            filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet}`,
+            filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet.id}`,
           },
           (payload) => {
             console.log("Real-time update received:", payload);
@@ -100,35 +101,31 @@ export default function ControlScreen() {
     console.log("Pull-to-refresh completed.");
   });
 
-  // Initial fetch on mount
   useEffect(() => {
     if (!user) return;
     fetchPets();
   }, [user]);
 
-  // Fetch feeds and manage real-time subscription when selectedPet changes
   useEffect(() => {
     if (!user || !selectedPet) return;
 
     fetchFeeds();
 
-    // Clean up previous subscription if it exists
     if (subscription) {
       console.log("Cleaning up previous subscription...");
       subscription.unsubscribe();
     }
 
-    // Set up real-time subscription
-    console.log("Setting up real-time subscription for pet:", selectedPet);
+    console.log("Setting up real-time subscription for pet:", selectedPet.id);
     const newSubscription = supabase
-      .channel(`feeds-${selectedPet}`)
+      .channel(`feeds-${selectedPet.id}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "feeds",
-          filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet}`,
+          filter: `user_id=eq.${user.id},pet_id=eq.${selectedPet.id}`,
         },
         (payload) => {
           console.log("Real-time update received:", payload);
@@ -165,10 +162,44 @@ export default function ControlScreen() {
     return (
       <View style={styles.feedItem}>
         <Text style={styles.feedText}>
-          Feed at {formattedTime} - Status: {item.status} - Amount: {item.amount_g || "N/A"}{" "}
-          {item.amount_g ? "grams" : ""}
+          Feed at {formattedTime} - Status: {item.status} - Amount:{" "}
+          {item.amount_g || "N/A"} {item.amount_g ? "grams" : ""}
         </Text>
       </View>
+    );
+  };
+
+  const renderDropdown = () => {
+    return (
+      <Modal
+        visible={showDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDropdown(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowDropdown(false)}>
+          <View style={styles.dropdownOverlay}>
+            <View style={styles.dropdownContainer}>
+              {pets.map((pet) => (
+                <TouchableOpacity
+                  key={pet.id}
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    console.log("Selected pet changed to:", pet);
+                    setSelectedPet(pet);
+                    setShowDropdown(false);
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>{pet.name}</Text>
+                  {selectedPet?.id === pet.id && (
+                    <Ionicons name="checkmark" size={18} color="#4CAF50" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     );
   };
 
@@ -177,30 +208,23 @@ export default function ControlScreen() {
       <Text style={styles.title}>Feed History</Text>
       <View style={styles.pickerContainer}>
         <Text style={styles.subtitle}>Select Pet:</Text>
-        <Picker
-          selectedValue={selectedPet}
-          style={styles.picker}
-          onValueChange={(itemValue) => {
-            console.log("Selected pet changed to:", itemValue);
-            setSelectedPet(itemValue);
-          }}
+        <TouchableOpacity
+          style={styles.dropdownButton}
+          onPress={() => setShowDropdown(true)}
         >
-          {pets.length === 0 ? (
-            <Picker.Item label="No pets available" value="" />
-          ) : (
-            pets.map((pet) => (
-              <Picker.Item
-                key={pet.id}
-                label={pet.name}
-                value={pet.id.toString()}
-              />
-            ))
-          )}
-        </Picker>
+          <Text style={styles.dropdownButtonText}>
+            {selectedPet ? selectedPet.name : "Select a pet"}
+          </Text>
+          <Ionicons
+            name={showDropdown ? "chevron-up" : "chevron-down"}
+            size={18}
+            color="#666"
+          />
+        </TouchableOpacity>
+        {renderDropdown()}
       </View>
       <Text style={styles.historyTitle}>
-        Recent Feeds for{" "}
-        {pets.find((p) => p.id.toString() === selectedPet)?.name || "Selected Pet"}
+        Recent Feeds for {selectedPet?.name || "Selected Pet"}
       </Text>
       <FlatList
         data={feeds}
@@ -238,11 +262,43 @@ const styles = StyleSheet.create({
     width: "100%",
     marginBottom: 20,
   },
-  picker: {
-    width: "100%",
+  dropdownButton: {
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  dropdownContainer: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    elevation: 2,
+    borderRadius: 8,
+    paddingVertical: 5,
+    elevation: 5,
+  },
+  dropdownItem: {
+    padding: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: "#333",
   },
   historyTitle: {
     fontSize: 20,
