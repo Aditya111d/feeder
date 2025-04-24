@@ -79,9 +79,7 @@ function AppContent() {
     console.log("Current pathname:", pathname);
     if (
       user &&
-      !["/dashboard", "/schedule", "/pets", "/pet-videos", "/control"].includes(
-        pathname
-      )
+      !["/dashboard", "/schedule", "/pets", "/control"].includes(pathname)
     ) {
       console.log("Redirecting to /dashboard for user:", user?.email);
       router.replace("/dashboard");
@@ -155,18 +153,6 @@ function AppContent() {
           title: "Manage Pets",
           drawerIcon: ({ size, color }) => (
             <Ionicons name="paw-outline" size={size} color={color} />
-          ),
-        }}
-      />
-
-      {/* Pet Videos */}
-      <Drawer.Screen
-        name="pet-videos"
-        options={{
-          drawerLabel: "Pet Videos",
-          title: "Pet Videos",
-          drawerIcon: ({ size, color }) => (
-            <Ionicons name="play-circle-outline" size={size} color={color} />
           ),
         }}
       />
